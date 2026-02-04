@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ElectroSearch - E-commerce Search</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Simple loading animation */
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="app"></div>
+  
+  <!-- React and Babel for quick demo -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    
+    // Main App Component
+    function App() {
+      const [query, setQuery] = useState('');
+      const [results, setResults] = useState([]);
+      const [suggestions, setSuggestions] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [showAddProduct, setShowAddProduct] = useState(false);
+      
+      const API_BASE = 'http://localhost:3000';
+      
+      // Get suggestions as user types
+      useEffect(() => {
+        if (query.length >= 2) {
+          fetch(`${API_BASE}/api/v1/search/suggestions?q=${encodeURIComponent(query)}`)
+            .then(res => res.json())
+            .then(data => setSuggestions(Array.isArray(data) ? data : []))
+            .catch(() => setSuggestions([]));
+        } else {
+          setSuggestions([]);
+        }
+      }, [query]);
+      
+      // Search products
+      const handleSearch = async (searchQuery = query) => {
+        if (!searchQuery.trim()) return;
+        
+        setLoading(true);
+        setError('');
+        try {
+          const res = await fetch(`${API_BASE}/api/v1/search/product?query=${encodeURIComponent(searchQuery)}`);
+          const data = await res.json();
+          setResults(data.data || []);
+          setSuggestions([]);
+        } catch (err) {
+          setError('Failed to search. Make sure server is running at http://localhost:3000');
+          setResults([]);
+        } finally {
+          setLoading(false);
+        }
+      };
+      
+      return (
+        <div className="min-h-screen">
+          {/* Header */}
+          <header className="bg-white shadow-sm border-b">
+            <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
+                  ES
+                </div>
+                <h1 className="text-xl font-bold text-gray-900">ElectroSearch</h1>
+              </div>
+              <button
+                onClick={() => setShowAddProduct(true)}
+                className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium"
+              >
+                + Add Product
+              </button>
+            </div>
+          </header>
+          
+          {/* Hero Section */}
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 py-16">
+            <div className="max-w-4xl mx-auto px-4 text-center">
+              <div className="inline-block px-4 py-2 bg-orange-100 text-orange-700 rounded-full text-sm font-medium mb-4">
+                ✨ Smart Search for Electronics
+              </div>
+              <h2 className="text-4xl font-bold text-gray-900 mb-4">
+                Find the Best Electronics at <span className="text-blue-600">Unbeatable Prices</span>
+              </h2>
+              <p className="text-gray-600 mb-8">
+                Search in your language — "Sasta iPhone", "Latest Samsung", "Budget laptop"
+              </p>
+              
+              {/* Search Box */}
+              <div className="relative max-w-2xl mx-auto">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                    placeholder="Search for phones, laptops, accessories..."
+                    className="w-full px-6 py-4 pr-32 rounded-xl border-2 border-gray-200 focus:border-blue-500 focus:outline-none text-lg"
+                  />
+                  <button
+                    onClick={() => handleSearch()}
+                    disabled={loading}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-8 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+                  >
+                    {loading ? <div className="spinner mx-auto"></div> : 'Search'}
+                  </button>
+                </div>
+                
+                {/* Suggestions Dropdown */}
+                {suggestions.length > 0 && (
+                  <div className="absolute top-full mt-2 w-full bg-white rounded-lg shadow-lg border z-10">
+                    {suggestions.slice(0, 10).map((s, i) => (
+                      <div
+                        key={i}
+                        onClick={() => {
+                          setQuery(s);
+                          handleSearch(s);
+                        }}
+                        className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b last:border-0"
+                      >
+                        {s}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {/* Popular Searches */}
+              <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+                <span className="text-sm text-gray-500">📈 Popular searches</span>
+                {['iPhone 16', 'Samsung Galaxy', 'Laptop under 50k', 'Wireless earbuds', 'Smart TV'].map(term => (
+                  <button
+                    key={term}
+                    onClick={() => {
+                      setQuery(term);
+                      handleSearch(term);
+                    }}
+                    className="px-4 py-2 bg-white rounded-full text-sm hover:bg-gray-50 border"
+                  >
+                    {term}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          {/* Error */}
+          {error && (
+            <div className="max-w-7xl mx-auto px-4 py-4">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                {error}
+              </div>
+            </div>
+          )}
+          
+          {/* Results */}
+          {results.length > 0 && (
+            <div className="max-w-7xl mx-auto px-4 py-8">
+              <h3 className="text-2xl font-bold mb-6">Search Results ({results.length})</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {results.map(product => (
+                  <ProductCard key={product.productId} product={product} />
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Features */}
+          {results.length === 0 && !error && (
+            <div className="max-w-7xl mx-auto px-4 py-16">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <FeatureCard
+                  icon="⚡"
+                  title="Lightning Fast"
+                  description="Get instant results as you type with smart autocomplete"
+                  color="blue"
+                />
+                <FeatureCard
+                  icon="✨"
+                  title="Smart Search"
+                  description="Understands natural language — search how you think"
+                  color="orange"
+                />
+                <FeatureCard
+                  icon="📈"
+                  title="Best Deals"
+                  description="Compare prices and find the best value for your budget"
+                  color="green"
+                />
+              </div>
+            </div>
+          )}
+          
+          {/* Add Product Modal */}
+          {showAddProduct && <AddProductModal onClose={() => setShowAddProduct(false)} />}
+        </div>
+      );
+    }
+    
+    // Product Card Component
+    function ProductCard({ product }) {
+      const discount = product.mrp > 0 ? Math.round((product.mrp - product.Sellingprice) / product.mrp * 100) : 0;
+      const inStock = product.stock > 0;
+      
+      return (
+        <div className="bg-white rounded-xl shadow-sm border hover:shadow-md transition-shadow p-6">
+          <div className="flex items-start justify-between mb-3">
+            <h4 className="font-semibold text-gray-900 line-clamp-2 flex-1">{product.title}</h4>
+            {discount > 0 && (
+              <span className="ml-2 px-2 py-1 bg-green-100 text-green-700 text-xs font-bold rounded">
+                {discount}% OFF
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-600 line-clamp-2 mb-4">{product.description}</p>
+          
+          <div className="flex items-baseline gap-2 mb-3">
+            <span className="text-2xl font-bold text-gray-900">₹{product.Sellingprice.toLocaleString()}</span>
+            {product.mrp > product.Sellingprice && (
+              <span className="text-sm text-gray-400 line-through">₹{product.mrp.toLocaleString()}</span>
+            )}
+          </div>
+          
+          {/* Metadata */}
+          {product.Metadata && Object.keys(product.Metadata).some(k => product.Metadata[k]) && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {Object.entries(product.Metadata).filter(([k, v]) => v).slice(0, 3).map(([key, value]) => (
+                <span key={key} className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">
+                  {value}
+                </span>
+              ))}
+            </div>
+          )}
+          
+          <div className="flex items-center justify-between pt-3 border-t">
+            <span className={`text-sm font-medium ${inStock ? 'text-green-600' : 'text-red-600'}`}>
+              {inStock ? `${product.stock} in stock` : 'Out of stock'}
+            </span>
+            <span className="text-sm text-gray-500">ID: {product.productId}</span>
+          </div>
+        </div>
+      );
+    }
+    
+    // Feature Card Component
+    function FeatureCard({ icon, title, description, color }) {
+      const colors = {
+        blue: 'bg-blue-50 text-blue-600',
+        orange: 'bg-orange-50 text-orange-600',
+        green: 'bg-green-50 text-green-600'
+      };
+      
+      return (
+        <div className="text-center">
+          <div className={`inline-flex items-center justify-center w-16 h-16 rounded-2xl ${colors[color]} text-3xl mb-4`}>
+            {icon}
+          </div>
+          <h3 className="text-xl font-bold text-gray-900 mb-2">{title}</h3>
+          <p className="text-gray-600">{description}</p>
+        </div>
+      );
+    }
+    
+    // Add Product Modal (simple version)
+    function AddProductModal({ onClose }) {
+      const [formData, setFormData] = useState({
+        title: '', description: '', rating: '', stock: '', price: '', mrp: '', currency: 'Rupee'
+      });
+      const [loading, setLoading] = useState(false);
+      const [message, setMessage] = useState('');
+      
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setMessage('');
+        try {
+          const res = await fetch('http://localhost:3000/api/v1/product', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...formData,
+              rating: parseFloat(formData.rating),
+              stock: parseInt(formData.stock),
+              price: parseInt(formData.price),
+              mrp: parseInt(formData.mrp)
+            })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setMessage(`Product added! ID: ${data.productId}`);
+            setTimeout(() => onClose(), 2000);
+          } else {
+            setMessage(`Error: ${data.message || 'Failed to add product'}`);
+          }
+        } catch (err) {
+          setMessage('Error: Make sure server is running');
+        } finally {
+          setLoading(false);
+        }
+      };
+      
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+              <h2 className="text-2xl font-bold">+ Add New Product</h2>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">×</button>
+            </div>
+            
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Product Title *</label>
+                  <input
+                    required
+                    value={formData.title}
+                    onChange={(e) => setFormData({...formData, title: e.target.value})}
+                    placeholder="e.g., iPhone 16 Pro"
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Rating (0-5) *</label>
+                  <input
+                    required
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="5"
+                    value={formData.rating}
+                    onChange={(e) => setFormData({...formData, rating: e.target.value})}
+                    placeholder="4.5"
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Selling Price (₹) *</label>
+                  <input
+                    required
+                    type="number"
+                    value={formData.price}
+                    onChange={(e) => setFormData({...formData, price: e.target.value})}
+                    placeholder="79999"
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">MRP (₹)</label>
+                  <input
+                    type="number"
+                    value={formData.mrp}
+                    onChange={(e) => setFormData({...formData, mrp: e.target.value})}
+                    placeholder="99999"
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Stock Quantity *</label>
+                  <input
+                    required
+                    type="number"
+                    value={formData.stock}
+                    onChange={(e) => setFormData({...formData, stock: e.target.value})}
+                    placeholder="100"
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Currency</label>
+                  <select
+                    value={formData.currency}
+                    onChange={(e) => setFormData({...formData, currency: e.target.value})}
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                  >
+                    <option>Rupee</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-1">Description</label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({...formData, description: e.target.value})}
+                  placeholder="Product description..."
+                  rows="3"
+                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                ></textarea>
+              </div>
+              
+              {message && (
+                <div className={`p-3 rounded-lg ${message.startsWith('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                  {message}
+                </div>
+              )}
+              
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 px-4 py-3 border rounded-lg hover:bg-gray-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+                >
+                  {loading ? 'Adding...' : 'Add Product'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+    
+    // Render App
+    ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+  </script>
+</body>
+</html>

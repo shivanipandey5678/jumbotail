@@ -1,0 +1,17 @@
+{
+  "name": "jumbotail-search",
+  "version": "1.0.0",
+  "description": "E-commerce search engine for electronics (Tier-2/3 India)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "generate-demo": "node scripts/generate-demo-data.js"
+  },
+  "engines": { "node": ">=18" },
+  "keywords": ["ecommerce", "search", "ranking", "electronics"],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.0",
+    "string-similarity": "^4.0.4"
+  }
+}
