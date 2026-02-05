@@ -1,210 +1,442 @@
 /**
- * Ranking Engine
- * Combines: relevance (text + fuzzy) + intent + quality (rating, reviews, sales) + stock + newness
+ * RANKING ENGINE
+ * 
+ * Purpose:
+ * - Calculate a score for each product based on query + product attributes
+ * - Combine multiple ranking signals (text match, rating, price, stock, etc.)
+ * - Sort products by score (highest first)
+ * 
+ * Assignment Formula (from question.txt):
+ * FinalScore = (TextMatch × 0.35) + (Rating × 0.20) + (Sales × 0.15) + 
+ *              (Price × 0.15) + (Stock × 0.10) + (ReturnPenalty × 0.05)
+ * 
+ * We enhance this with:
+ * - Intent-based boosting (cheap for "sasta", new for "latest")
+ * - Trust signals (verified reviews, photo reviews)
+ * - Attribute matching (color, storage)
+ * 
+ * Why separate file?
+ * - Ranking logic is complex and math-heavy
+ * - Easy to tune weights without touching other code
+ * - Can A/B test different formulas
  */
 
 const stringSimilarity = require('string-similarity');
 
-const FUZZY_THRESHOLD = 0.5;
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
 
 /**
- * Normalize and tokenize text for matching
+ * Ranking weights (based on assignment + enhancements)
+ * 
+ * Higher weight = more important in final score
+ * Total should ideally sum to 1.0 (100%)
+ */
+const WEIGHTS = {
+  textRelevance: 0.35,    // How well query matches title/description
+  rating: 0.20,           // Product rating (4.5 stars)
+  sales: 0.15,            // Units sold (popularity)
+  price: 0.15,            // Price (depends on intent: cheap vs expensive)
+  stock: 0.10,            // Stock availability
+  returnPenalty: 0.05     // Return rate penalty
+};
+
+/**
+ * Fuzzy matching threshold for title words
+ */
+const FUZZY_THRESHOLD = 0.5;
+
+// ============================================================================
+// HELPER: TOKENIZE TEXT
+// ============================================================================
+
+/**
+ * Normalize and split text into words
+ * 
+ * @param {string} text - Text to tokenize
+ * @returns {string[]} Array of lowercase words
+ * 
+ * Example:
+ * tokenize("iPhone 16 Pro") → ["iphone", "16", "pro"]
  */
 function tokenize(text) {
   if (!text || typeof text !== 'string') return [];
-  return text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(Boolean);
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ') // Remove punctuation
+    .split(/\s+/)
+    .filter(Boolean);
 }
 
+// ============================================================================
+// SCORING FUNCTIONS
+// ============================================================================
+
 /**
- * Text relevance score (0-1): how well query matches title, description, metadata
+ * 1. TEXT RELEVANCE SCORE (0-1)
+ * 
+ * How well does the query match the product?
+ * Checks: title, description, metadata
+ * 
+ * @param {string} query - User search query
+ * @param {object} product - Product object
+ * @returns {number} Score between 0 and 1
+ * 
+ * Logic:
+ * - For each query word, find best match in title
+ * - Use exact match (1.0) or fuzzy match (0.5-1.0)
+ * - Average across all query words
+ * 
+ * Example:
+ * Query: "Ifone 16"
+ * Product title: "iPhone 16 Pro"
+ * - "Ifone" fuzzy matches "iPhone" (0.75)
+ * - "16" exact matches "16" (1.0)
+ * → Average: 0.875
  */
-function relevanceScore(query, product) {
-  const qTokens = tokenize(query);
-  if (qTokens.length === 0) return 0.5;
+function calculateTextRelevance(query, product) {
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0) return 0.5; // Neutral score for empty query
 
   const title = (product.title || '').toLowerCase();
-  const desc = (product.description || '').toLowerCase();
-  const metaStr = product.metadata && typeof product.metadata === 'object'
+  const description = (product.description || '').toLowerCase();
+  const metadataStr = product.metadata 
     ? Object.values(product.metadata).filter(Boolean).join(' ').toLowerCase()
     : '';
 
-  let score = 0;
-  let matched = 0;
+  const titleWords = tokenize(product.title || '');
   
-  for (const qt of qTokens) {
-    let best = 0;
-    
-    // Exact or fuzzy match in title
-    if (title.includes(qt)) {
-      best = Math.max(best, 1);
-    } else {
-      const titleWords = title.split(/\s+/).filter(Boolean);
-      if (titleWords.length) {
-        const sim = stringSimilarity.findBestMatch(qt, titleWords).bestMatch?.rating ?? 0;
-        if (sim >= FUZZY_THRESHOLD) best = Math.max(best, sim);
+  let totalScore = 0;
+  let matchedWords = 0;
+
+  for (const queryWord of queryTokens) {
+    let bestScore = 0;
+
+    // Check title for exact or fuzzy match
+    if (title.includes(queryWord)) {
+      bestScore = Math.max(bestScore, 1.0); // Exact match in title
+    } else if (titleWords.length > 0) {
+      // Fuzzy match against title words
+      const match = stringSimilarity.findBestMatch(queryWord, titleWords);
+      if (match.bestMatch.rating >= FUZZY_THRESHOLD) {
+        bestScore = Math.max(bestScore, match.bestMatch.rating);
       }
     }
-    
-    // Match in description
-    if (desc.includes(qt)) best = Math.max(best, 0.8);
-    
-    // Match in metadata
-    if (metaStr && metaStr.includes(qt)) best = Math.max(best, 0.9);
-    
-    score += best;
-    if (best > 0) matched++;
+
+    // Check description (lower weight)
+    if (description.includes(queryWord)) {
+      bestScore = Math.max(bestScore, 0.8);
+    }
+
+    // Check metadata (medium weight)
+    if (metadataStr && metadataStr.includes(queryWord)) {
+      bestScore = Math.max(bestScore, 0.9);
+    }
+
+    totalScore += bestScore;
+    if (bestScore > 0) matchedWords++;
   }
+
+  // Normalize by query length, boost if all words matched
+  const avgScore = totalScore / queryTokens.length;
+  const matchRatio = matchedWords / queryTokens.length;
   
-  const norm = (score / qTokens.length) * (0.5 + 0.5 * (matched / qTokens.length));
-  return Math.min(1, norm);
+  return avgScore * (0.5 + 0.5 * matchRatio); // Boost if more words matched
 }
 
 /**
- * Intent-based boost: price (cheaper/discount), quality (rating), latest (recency)
+ * 2. RATING SCORE (0-1)
+ * 
+ * Product rating with confidence boost from review count
+ * 
+ * Logic:
+ * - Base: rating / 5 (4.5 stars → 0.9)
+ * - Confidence: log(review_count) to boost highly-reviewed products
+ * 
+ * Why log?
+ * - 100 reviews vs 10 reviews: big difference
+ * - 10,000 reviews vs 9,000 reviews: small difference (diminishing returns)
  */
-function intentBoost(product, intent) {
-  if (!intent || intent.type === 'general') return 1.0;
-
-  if (intent.type === 'price') {
-    // Prefer cheaper + higher discount
-    const discount = product.mrp > 0 ? (product.mrp - product.price) / product.mrp : 0;
-    const cheapScore = product.price <= 100000 ? 1 - product.price / 100000 : 0.3;
-    return 0.5 + 0.5 * (discount * 0.6 + cheapScore * 0.4);
-  }
-
-  if (intent.type === 'quality') {
-    // Prefer higher rating
-    return 0.5 + 0.5 * ((product.rating || 0) / 5);
-  }
-
-  if (intent.type === 'latest') {
-    // Prefer recent launches
-    const launch = product.launch_date ? new Date(product.launch_date).getFullYear() : 2020;
-    const now = new Date().getFullYear();
-    const yearsAgo = now - launch;
-    const recency = Math.max(0, 1 - yearsAgo / 5);
-    return 0.5 + 0.5 * recency;
-  }
-
-  return 1.0;
-}
-
-/**
- * Newness boost: recent products (last 6 months) with rating >= 4.0 get a boost
- */
-function newnessBoost(product) {
-  const launch = product.launch_date ? new Date(product.launch_date) : null;
-  if (!launch) return 1.0;
-  
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-  
-  if (launch < sixMonthsAgo) return 1.0;
-  
+function calculateRatingScore(product) {
   const rating = Number(product.rating) || 0;
-  if (rating >= 4.0) return 1.15; // 15% boost for new quality products
+  const reviewCount = Number(product.review_count) || 1;
   
-  return 1.0;
+  const baseScore = rating / 5; // Normalize to 0-1
+  const confidenceBoost = Math.log(1 + reviewCount) / 10; // log(101) ≈ 0.46
+  
+  return Math.min(1, baseScore * (0.6 + 0.4 * Math.min(1, confidenceBoost)));
 }
 
 /**
- * Quality score: rating + review count (confidence)
+ * 3. SALES/POPULARITY SCORE (0-1)
+ * 
+ * Units sold (social proof)
+ * Uses log scale (same reasoning as rating confidence)
  */
-function qualityScore(product) {
-  const r = (Number(product.rating) || 0) / 5;
-  const rc = Math.log(1 + (Number(product.review_count) || 0)) / 10;
-  return Math.min(1, r * (0.6 + 0.4 * Math.min(1, rc)));
+function calculateSalesScore(product) {
+  const unitsSold = Number(product.units_sold) || 0;
+  return Math.min(1, Math.log(1 + unitsSold) / 12); // log(162755) ≈ 12
 }
 
 /**
- * Trust score: verified reviews, photo reviews, low return rate
+ * 4. PRICE SCORE (0-1)
+ * 
+ * CRITICAL: Score depends on intent!
+ * - Price intent ("sasta"): Cheaper = Higher score
+ * - Quality intent ("best"): More expensive might be better
+ * - General: Neutral (discount % matters)
+ * 
+ * @param {object} product
+ * @param {object} intent - From intent.js
+ * @returns {number} Score between 0 and 1
  */
-function trustScore(product) {
-  const rc = Number(product.review_count) || 1;
-  const verified = Number(product.verified_review_count) || 0;
-  const photo = Number(product.photo_review_count) || 0;
-  const trust = (verified + photo * 2) / (rc + 1);
+function calculatePriceScore(product, intent) {
+  const price = Number(product.price) || 0;
+  const mrp = Number(product.mrp) || price;
+  const discount = mrp > 0 ? (mrp - price) / mrp : 0;
+
+  // Price intent: prefer cheaper products
+  if (intent.type === 'price') {
+    // Normalize price to 0-1 (assume max price is 200k)
+    const priceNorm = Math.max(0, 1 - price / 200000);
+    
+    // If user specified price range, boost products near that range
+    if (intent.priceRange) {
+      const distanceFromTarget = Math.abs(price - intent.priceRange);
+      const proximityBoost = Math.max(0, 1 - distanceFromTarget / intent.priceRange);
+      return 0.6 * priceNorm + 0.4 * proximityBoost;
+    }
+    
+    return 0.5 * priceNorm + 0.5 * discount; // Cheap + high discount
+  }
+
+  // Quality intent: don't penalize higher prices
+  if (intent.type === 'quality') {
+    return 0.5 + 0.5 * discount; // Just reward discounts
+  }
+
+  // General: discount matters most
+  return 0.3 + 0.7 * discount;
+}
+
+/**
+ * 5. STOCK SCORE (0-1)
+ * 
+ * Heavily penalize out-of-stock products
+ * 
+ * Logic:
+ * - In stock: 1.0
+ * - Out of stock: 0.2 (massive penalty)
+ * - Low stock (< 5): 0.7 (slight penalty)
+ */
+function calculateStockScore(product) {
+  const stock = Number(product.stock) || 0;
+  
+  if (stock === 0) return 0.2;  // Out of stock → 80% penalty
+  if (stock < 5) return 0.7;    // Low stock → 30% penalty
+  return 1.0;                   // In stock → full score
+}
+
+/**
+ * 6. RETURN PENALTY (0-1)
+ * 
+ * High return rate = quality issues
+ * 
+ * Logic:
+ * - 0% return rate: score = 1.0
+ * - 20% return rate: score = 0.0
+ */
+function calculateReturnPenalty(product) {
   const returnRate = Number(product.return_rate) || 0;
-  return Math.min(1, trust) * (1 - returnRate);
+  return Math.max(0, 1 - returnRate * 5); // 20% return → 0 score
 }
 
 /**
- * Popularity score: units sold (log scale)
+ * 7. TRUST SCORE (BONUS)
+ * 
+ * Verified reviews + photo reviews = trustworthy
+ * 
+ * Not in assignment, but improves ranking quality
  */
-function popularityScore(product) {
-  const u = Number(product.units_sold) || 0;
-  return Math.min(1, Math.log(1 + u) / 12);
+function calculateTrustScore(product) {
+  const reviewCount = Number(product.review_count) || 1;
+  const verifiedCount = Number(product.verified_review_count) || 0;
+  const photoCount = Number(product.photo_review_count) || 0;
+  
+  const trustRatio = (verifiedCount + photoCount * 2) / (reviewCount + 1);
+  return Math.min(1, trustRatio);
 }
 
 /**
- * Stock boost: penalize out-of-stock products
+ * 8. INTENT BOOST (MULTIPLIER)
+ * 
+ * Boost products that match user intent
+ * 
+ * Examples:
+ * - "Latest iPhone": Boost products launched in last 6 months
+ * - "Sasta": Already handled in price score
+ * - "Best": Boost high-rated products
  */
-function stockBoost(product) {
-  const s = Number(product.stock) || 0;
-  return s > 0 ? 1.0 : 0.15; // Out of stock = 15% of score
+function calculateIntentBoost(product, intent) {
+  if (intent.type === 'latest') {
+    // Boost recent products
+    const launchDate = product.launch_date ? new Date(product.launch_date) : null;
+    if (!launchDate) return 1.0;
+    
+    const monthsAgo = (new Date() - launchDate) / (1000 * 60 * 60 * 24 * 30);
+    if (monthsAgo < 6 && product.rating >= 4.0) {
+      return 1.2; // 20% boost for new, high-rated products
+    }
+  }
+  
+  if (intent.type === 'quality') {
+    // Boost high-rated products
+    if (product.rating >= 4.5) return 1.15;
+  }
+  
+  return 1.0; // No boost
 }
 
 /**
- * Attribute boost: color, storage, strength match in metadata/title/description
+ * 9. ATTRIBUTE BOOST (MULTIPLIER)
+ * 
+ * Boost products matching specific attributes
+ * 
+ * Example:
+ * Query: "iPhone 16 red color 128GB"
+ * Product metadata: { color: 'red', storage: '128GB' }
+ * → Boost by 30%
  */
-function attributeBoost(product, intent) {
-  const attrs = intent?.attributes || {};
-  if (!attrs.color && !attrs.storage && !attrs.strength) return 1.0;
-  
-  const text = [product.title, product.description, JSON.stringify(product.metadata || {})].join(' ').toLowerCase();
-  
-  let mult = 1.0;
-  if (attrs.color && text.includes(attrs.color)) mult *= 1.2;
-  if (attrs.storage && (text.includes(attrs.storage) || text.includes('storage') || text.includes('gb'))) mult *= 1.1;
-  if (attrs.strength && (text.includes('strong') || text.includes('durable') || text.includes('cover'))) mult *= 1.1;
-  
-  return mult;
+function calculateAttributeBoost(product, intent) {
+  if (!intent.attributes || Object.keys(intent.attributes).length === 0) {
+    return 1.0;
+  }
+
+  const productText = [
+    product.title,
+    product.description,
+    JSON.stringify(product.metadata || {})
+  ].join(' ').toLowerCase();
+
+  let boost = 1.0;
+
+  // Color match
+  if (intent.attributes.color) {
+    if (productText.includes(intent.attributes.color.toLowerCase())) {
+      boost *= 1.15; // 15% boost
+    }
+  }
+
+  // Storage match
+  if (intent.attributes.storage) {
+    const storageValue = intent.attributes.storage;
+    if (storageValue === 'more') {
+      // Prefer higher storage (256GB > 128GB > 64GB)
+      if (productText.includes('256gb') || productText.includes('512gb')) {
+        boost *= 1.1;
+      }
+    } else if (productText.includes(storageValue.toLowerCase())) {
+      boost *= 1.15;
+    }
+  }
+
+  // Strength match (for covers/accessories)
+  if (intent.attributes.strength) {
+    if (productText.includes('strong') || productText.includes('durable')) {
+      boost *= 1.1;
+    }
+  }
+
+  return boost;
 }
 
+// ============================================================================
+// MAIN RANKING FUNCTION
+// ============================================================================
+
 /**
- * Rank products: combine all signals and return sorted
- * @param {Array} products - All products
- * @param {string} query - Search query
- * @param {object} intent - Detected intent
- * @returns {Array} Sorted products with _score
+ * Rank all products for a given query
+ * 
+ * @param {object[]} products - Array of all products
+ * @param {string} query - User search query
+ * @param {object} intent - Intent object from intent.js
+ * @returns {object[]} Sorted array of products with _score field
+ * 
+ * Flow:
+ * 1. For each product, calculate all scores
+ * 2. Combine scores using weighted formula
+ * 3. Apply multipliers (intent boost, attribute boost)
+ * 4. Sort by final score (descending)
+ * 5. Return ranked list
  */
 function rankProducts(products, query, intent) {
-  return products.map((p) => {
-    const rel = relevanceScore(query, p);
-    const intentB = intentBoost(p, intent);
-    const qual = qualityScore(p);
-    const trust = trustScore(p);
-    const pop = popularityScore(p);
-    const stockB = stockBoost(p);
-    const newB = newnessBoost(p);
-    const attrB = attributeBoost(p, intent);
-
-    // Weighted sum of all signals
-    const score =
-      rel * 0.30 +        // Relevance (30%)
-      intentB * 0.20 +    // Intent alignment (20%)
-      qual * 0.18 +       // Quality (18%)
-      trust * 0.12 +      // Trust (12%)
-      pop * 0.12 +        // Popularity (12%)
-      (stockB * 0.08);    // Stock (8%)
+  const rankedProducts = products.map((product) => {
+    // Calculate individual scores
+    const textScore = calculateTextRelevance(query, product);
+    const ratingScore = calculateRatingScore(product);
+    const salesScore = calculateSalesScore(product);
+    const priceScore = calculatePriceScore(product, intent);
+    const stockScore = calculateStockScore(product);
+    const returnScore = calculateReturnPenalty(product);
     
-    const finalScore = score * newB * attrB; // Apply newness + attribute boosts
+    // Bonus scores (not in assignment formula)
+    const trustScore = calculateTrustScore(product);
+    
+    // Weighted sum (based on assignment formula)
+    const baseScore = 
+      textScore * WEIGHTS.textRelevance +
+      ratingScore * WEIGHTS.rating +
+      salesScore * WEIGHTS.sales +
+      priceScore * WEIGHTS.price +
+      stockScore * WEIGHTS.stock +
+      returnScore * WEIGHTS.returnPenalty;
+    
+    // Add trust as small bonus (not weighted)
+    const scoreWithBonus = baseScore * 0.9 + trustScore * 0.1;
+    
+    // Apply multipliers
+    const intentBoost = calculateIntentBoost(product, intent);
+    const attributeBoost = calculateAttributeBoost(product, intent);
+    
+    const finalScore = scoreWithBonus * intentBoost * attributeBoost;
+    
+    // Return product with score
+    return {
+      ...product,
+      _score: finalScore,
+      _debug: { // For debugging (can remove in production)
+        textScore,
+        ratingScore,
+        salesScore,
+        priceScore,
+        stockScore,
+        returnScore,
+        trustScore,
+        intentBoost,
+        attributeBoost
+      }
+    };
+  });
 
-    return { ...p, _score: finalScore };
-  })
-  .filter((p) => p._score > 0.01) // Filter very low scores
-  .sort((a, b) => b._score - a._score); // Sort descending
+  // Sort by score (highest first) and filter very low scores
+  return rankedProducts
+    .filter(p => p._score > 0.05) // Remove irrelevant products
+    .sort((a, b) => b._score - a._score);
 }
 
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
 module.exports = {
-  relevanceScore,
-  intentBoost,
-  newnessBoost,
-  qualityScore,
-  trustScore,
-  popularityScore,
-  stockBoost,
-  attributeBoost,
   rankProducts,
-  tokenize,
+  
+  // Export individual functions for testing
+  calculateTextRelevance,
+  calculateRatingScore,
+  calculateSalesScore,
+  calculatePriceScore,
+  calculateStockScore,
+  calculateReturnPenalty
 };

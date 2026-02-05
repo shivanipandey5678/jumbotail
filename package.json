@@ -1,17 +1,33 @@
 {
-  "name": "jumbotail-search",
+  "name": "jumbotail-search-engine",
   "version": "1.0.0",
-  "description": "E-commerce search engine for electronics (Tier-2/3 India)",
+  "description": "E-commerce search & ranking microservice for electronics",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "generate-demo": "node scripts/generate-demo-data.js"
+    "dev": "node --watch src/index.js",
+    "frontend": "node frontend-server.js",
+    "start:all": "npm start & npm run frontend"
   },
-  "engines": { "node": ">=18" },
-  "keywords": ["ecommerce", "search", "ranking", "electronics"],
+  "keywords": [
+    "search",
+    "ranking",
+    "ecommerce",
+    "microservice"
+  ],
+  "author": "shivani pandey",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
-    "express": "^4.21.0",
-    "string-similarity": "^4.0.4"
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "mongodb": "^7.1.0",
+    "sanitize-html": "^2.11.0",
+    "string-similarity": "^4.0.4",
+    "validator": "^13.11.0"
   }
 }

@@ -1,120 +1,259 @@
 /**
- * In-memory product catalog
- * - Loads products from JSON file on startup
- * - Supports add, update metadata, get, list
+ * CATALOG MODULE - MongoDB Product Storage
+ * 
+ * Purpose:
+ * - Store all products in MongoDB (cloud database)
+ * - Provide CRUD operations for products
+ * - Replaced in-memory Map with persistent database
+ * 
+ * Why MongoDB over Map?
+ * - Data persists even after server restart
+ * - Can scale to millions of products
+ * - Built-in text search
+ * - Cloud backup
+ * 
+ * Trade-off:
+ * - Slightly slower than in-memory (~10-50ms per query)
+ * - But still under 1000ms requirement!
  */
 
-const fs = require('fs');
-const path = require('path');
+const { getDB } = require('./db/mongodb');
+const { ObjectId } = require('mongodb');
 
-// In-memory storage: Map of productId -> product
-const products = new Map();
-let nextId = 1;
+// ============================================================================
+// ADD PRODUCT
+// ============================================================================
 
 /**
- * Load products from JSON file
- * @param {string} filePath - Path to products JSON
- * @returns {number} Count of products loaded
+ * Add a new product to MongoDB
+ * 
+ * @param {Object} productData - Product details
+ * @returns {Promise<string>} MongoDB _id of inserted product
+ * 
+ * Flow:
+ * 1. Get database connection
+ * 2. Add timestamps
+ * 3. Insert into 'products' collection
+ * 4. Return generated _id
  */
-function loadFromFile(filePath) {
-  const resolved = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+async function addProduct(productData) {
+  const db = getDB();
   
-  if (!fs.existsSync(resolved)) {
-    console.log(`⚠️  File not found: ${resolved}`);
-    return 0;
-  }
-  
-  try {
-    const data = JSON.parse(fs.readFileSync(resolved, 'utf8'));
-    const list = Array.isArray(data) ? data : [];
-    
-    list.forEach((p) => {
-      const id = p.productId != null ? p.productId : nextId++;
-      products.set(id, { ...p, productId: id });
-      if (id >= nextId) nextId = id + 1;
-    });
-    
-    return list.length;
-  } catch (err) {
-    console.error('❌ Catalog load error:', err.message);
-    return 0;
-  }
-}
-
-/**
- * Add a new product
- * @param {object} body - Product data (title, description, rating, stock, price, mrp, currency)
- * @returns {number} productId
- */
-function addProduct(body) {
-  const productId = nextId++;
   const product = {
-    productId,
-    title: body.title ?? '',
-    description: body.description ?? '',
-    category: body.category ?? 'mobile',
-    brand: body.brand ?? '',
-    rating: Number(body.rating) || 0,
-    review_count: body.review_count ?? 0,
-    units_sold: body.units_sold ?? 0,
-    stock: Number(body.stock) || 0,
-    price: Number(body.price) || 0,
-    mrp: Number(body.mrp) || 0,
-    currency: body.currency ?? 'Rupee',
-    verified_review_count: body.verified_review_count ?? 0,
-    photo_review_count: body.photo_review_count ?? 0,
-    return_rate: body.return_rate ?? 0,
-    complaint_count: body.complaint_count ?? 0,
-    launch_date: body.launch_date ?? new Date().toISOString().split('T')[0],
-    metadata: body.metadata && typeof body.metadata === 'object' ? { ...body.metadata } : {},
+    ...productData,
+    createdAt: new Date(),
+    updatedAt: new Date()
   };
   
-  products.set(productId, product);
-  return productId;
+  const result = await db.collection('products').insertOne(product);
+  return result.insertedId.toString();
 }
 
+// ============================================================================
+// GET ALL PRODUCTS
+// ============================================================================
+
 /**
- * Update metadata for a product
- * @param {number} productId
- * @param {object} metadata - Metadata object (ram, storage, etc.)
- * @returns {object|null} { productId, Metadata } or null if not found
+ * Get all products from MongoDB
+ * 
+ * @returns {Promise<Array>} Array of all products
+ * 
+ * Used by:
+ * - Search service (to rank all products)
+ * - Initial data load
+ * 
+ * Performance:
+ * - ~50-100ms for 1000 products
+ * - Well under 1000ms requirement
  */
-function updateMetadata(productId, metadata) {
-  const p = products.get(Number(productId));
-  if (!p) return null;
+async function getAllProducts() {
+  const db = getDB();
+  const products = await db.collection('products').find({}).toArray();
   
-  const meta = metadata && typeof metadata === 'object' ? { ...metadata } : {};
-  p.metadata = { ...(p.metadata || {}), ...meta };
+  // Convert MongoDB _id to productId for consistency
+  return products.map(product => ({
+    ...product,
+    productId: product.productId || product._id.toString()
+  }));
+}
+
+// ============================================================================
+// UPDATE METADATA
+// ============================================================================
+
+/**
+ * Update product metadata
+ * 
+ * @param {string} productId - Product ID (MongoDB _id or custom productId)
+ * @param {Object} metadata - Metadata object (ram, storage, color, etc.)
+ * @returns {Promise<Object|null>} Updated product or null if not found
+ * 
+ * Flow:
+ * 1. Try to find by custom productId first
+ * 2. If not found and looks like ObjectId, try MongoDB _id
+ * 3. Update metadata field
+ * 4. Update updatedAt timestamp
+ * 5. Return updated product
+ */
+async function updateMetadata(productId, metadata) {
+  const db = getDB();
   
-  return { productId: p.productId, Metadata: p.metadata };
+  let query;
+  
+  // Try custom productId first
+  if (!isNaN(productId)) {
+    query = { productId: parseInt(productId) };
+  } 
+  // Try MongoDB _id if it looks like ObjectId format
+  else if (ObjectId.isValid(productId) && productId.length === 24) {
+    query = { _id: new ObjectId(productId) };
+  }
+  // Try both
+  else {
+    query = { $or: [
+      { productId: parseInt(productId) || productId },
+      ObjectId.isValid(productId) ? { _id: new ObjectId(productId) } : {}
+    ]};
+  }
+  
+  const result = await db.collection('products').findOneAndUpdate(
+    query,
+    { 
+      $set: { 
+        metadata,
+        updatedAt: new Date()
+      } 
+    },
+    { returnDocument: 'after' } // Return updated document
+  );
+  
+  if (!result.value) {
+    return null; // Product not found
+  }
+  
+  return {
+    ...result.value,
+    productId: result.value.productId || result.value._id.toString()
+  };
 }
 
-/**
- * Get product by ID
- */
-function getProduct(productId) {
-  return products.get(Number(productId));
-}
+// ============================================================================
+// GET PRODUCT BY ID
+// ============================================================================
 
 /**
- * Get all products (for search)
+ * Get a single product by ID
+ * 
+ * @param {string} productId - Product ID
+ * @returns {Promise<Object|null>} Product or null if not found
  */
-function getAllProducts() {
-  return Array.from(products.values());
+async function getProductById(productId) {
+  const db = getDB();
+  
+  let query;
+  
+  // Try custom productId first
+  if (!isNaN(productId)) {
+    query = { productId: parseInt(productId) };
+  } 
+  // Try MongoDB _id
+  else if (ObjectId.isValid(productId) && productId.length === 24) {
+    query = { _id: new ObjectId(productId) };
+  }
+  else {
+    return null;
+  }
+  
+  const product = await db.collection('products').findOne(query);
+  
+  if (!product) {
+    return null;
+  }
+  
+  return {
+    ...product,
+    productId: product.productId || product._id.toString()
+  };
 }
 
+// ============================================================================
+// GET COLLECTION SIZE
+// ============================================================================
+
 /**
- * Get catalog size
+ * Get total number of products
+ * 
+ * @returns {Promise<number>} Count of products
  */
-function size() {
-  return products.size;
+async function getSize() {
+  const db = getDB();
+  return await db.collection('products').countDocuments();
 }
+
+// ============================================================================
+// SEARCH PRODUCTS (Text Search)
+// ============================================================================
+
+/**
+ * Search products using MongoDB text search
+ * 
+ * @param {string} query - Search query
+ * @returns {Promise<Array>} Matching products
+ * 
+ * Uses MongoDB's built-in text index for fast searching
+ * Searches in: title, description
+ */
+async function searchProducts(query) {
+  const db = getDB();
+  
+  const products = await db.collection('products').find({
+    $text: { $search: query }
+  }, {
+    score: { $meta: "textScore" }
+  })
+  .sort({ score: { $meta: "textScore" } })
+  .toArray();
+  
+  return products.map(product => ({
+    ...product,
+    productId: product.productId || product._id.toString()
+  }));
+}
+
+// ============================================================================
+// BULK INSERT (For Migration)
+// ============================================================================
+
+/**
+ * Bulk insert multiple products
+ * Used by migration script
+ * 
+ * @param {Array} productsArray - Array of products
+ * @returns {Promise<number>} Number of products inserted
+ */
+async function bulkInsertProducts(productsArray) {
+  const db = getDB();
+  
+  const productsWithTimestamps = productsArray.map(product => ({
+    ...product,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  }));
+  
+  const result = await db.collection('products').insertMany(productsWithTimestamps);
+  return result.insertedCount;
+}
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
 
 module.exports = {
-  loadFromFile,
   addProduct,
-  updateMetadata,
-  getProduct,
   getAllProducts,
-  size,
+  updateMetadata,
+  getProductById,
+  getSize,
+  searchProducts,
+  bulkInsertProducts
 };

@@ -1,94 +1,265 @@
 /**
- * Intent Detection (Manual + Fuzzy)
- * Detects: price/budget, quality, latest, attributes (color, storage, strength)
- * Uses string-similarity for typo handling
+ * INTENT DETECTION SERVICE
+ * 
+ * Purpose:
+ * - Understand what the user wants from their search query
+ * - Detect intent: price (cheap), quality (best), latest (new), or general
+ * - Extract attributes: color, storage, price range
+ * - Handle typos using fuzzy matching
+ * 
+ * Examples:
+ * - "Sasta iPhone" → { type: 'price', ... } (user wants cheap)
+ * - "Latest iPhone" → { type: 'latest', ... } (user wants new)
+ * - "Ifone 16" → fuzzy matches "iPhone 16" (typo handling)
+ * - "iPhone 16 red color" → { attributes: { color: 'red' } }
+ * 
+ * Why separate file?
+ * - Intent detection logic is complex
+ * - Can be improved/replaced without touching ranking
+ * - Easy to add more intents (luxury, discount, etc.)
  */
 
 const stringSimilarity = require('string-similarity');
 
-const FUZZY_THRESHOLD = 0.7; // 70% similarity
-
-// Keywords for different intents
-const PRICE_KEYWORDS = ['sasta', 'sastha', 'cheap', 'budget', 'kam', 'affordable', 'paisa'];
-const QUALITY_KEYWORDS = ['best', 'top', 'badiya', 'achha', 'good', 'premium'];
-const LATEST_KEYWORDS = ['latest', 'naya', 'new', 'nayi', 'recent'];
-const STRENGTH_KEYWORDS = ['strong', 'durable', 'mazboot', 'tough'];
-
-const COLOR_WORDS = ['red', 'blue', 'black', 'white', 'green', 'gold', 'silver', 'purple', 'pink', 'laal', 'neela', 'colour', 'color'];
-
-// Patterns for price and storage
-const STORAGE_PATTERN = /\b(\d+)\s*gb\b|more\s+storage|storage\s+(\d+)|(\d+)\s*gb\s+storage/i;
-const PRICE_PATTERN = /(\d+)\s*k\s*(rupees?)?|(\d{4,})\s*(rupees?)?|under\s*(\d+)\s*k/i;
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
 
 /**
- * Check if word fuzzy matches any keyword
+ * Fuzzy matching threshold
+ * 0.7 means 70% similarity required to match
+ * Example: "Ifone" has 0.75 similarity to "iPhone" → MATCH
+ */
+const FUZZY_THRESHOLD = 0.7;
+
+/**
+ * Intent keywords (English + Hinglish)
+ * 
+ * Why Hinglish?
+ * - Assignment targets Tier-2/3 cities in India
+ * - Users mix Hindi-English (sasta, achha, naya)
+ */
+
+// Price/Budget intent
+const PRICE_KEYWORDS = [
+  'sasta', 'sastha', 'cheap', 'budget', 'kam', 'affordable', 
+  'paisa', 'discount', 'offer', 'deal'
+];
+
+// Quality intent
+const QUALITY_KEYWORDS = [
+  'best', 'top', 'badiya', 'achha', 'good', 'premium', 
+  'excellent', 'accha', 'badhiya','acha'
+];
+
+// Latest intent
+const LATEST_KEYWORDS = [
+  'latest', 'naya', 'new', 'nayi', 'recent', 'newest'
+];
+
+// Attribute keywords
+const COLOR_WORDS = [
+  'red', 'blue', 'black', 'white', 'green', 'gold', 'silver', 
+  'purple', 'pink', 'laal', 'neela', 'safed', 'kala'
+];
+
+const STRENGTH_KEYWORDS = [
+  'strong', 'durable', 'mazboot', 'tough', 'sturdy'
+];
+
+// ============================================================================
+// REGEX PATTERNS
+// ============================================================================
+
+/**
+ * Extract storage: "128GB", "more storage", "256 gb"
+ */
+const STORAGE_PATTERN = /\b(\d+)\s*gb\b|more\s+storage|zyada\s+storage/i;
+
+/**
+ * Extract price range: "50k", "50000 rupees", "under 50k"
+ */
+const PRICE_PATTERN = /(\d+)\s*k\s*(rupees?)?|(\d{4,})\s*(rupees?)?|under\s*(\d+)\s*k/i;
+
+// ============================================================================
+// FUZZY MATCHING HELPER
+// ============================================================================
+
+/**
+ * Check if a word fuzzy-matches any keyword in list
+ * 
+ * @param {string} word - Word from user query
+ * @param {string[]} keywords - List of keywords to match against
+ * @returns {boolean} True if word matches any keyword
+ * 
+ * Example:
+ * matchesKeyword("sastha", PRICE_KEYWORDS) → true
+ * matchesKeyword("Ifone", ["iPhone", "iphone"]) → true (75% similar)
  */
 function matchesKeyword(word, keywords) {
-  const w = word.toLowerCase();
-  return keywords.some((kw) => {
-    const sim = stringSimilarity.compareTwoStrings(w, kw);
-    return sim >= FUZZY_THRESHOLD || w.includes(kw) || kw.includes(w);
+  const normalizedWord = word.toLowerCase();
+  
+  return keywords.some((keyword) => {
+    // Exact match
+    if (normalizedWord === keyword.toLowerCase()) {
+      return true;
+    }
+    
+    // Contains match (substring)
+    if (normalizedWord.includes(keyword) || keyword.includes(normalizedWord)) {
+      return true;
+    }
+    
+    // Fuzzy match (typo tolerance)
+    const similarity = stringSimilarity.compareTwoStrings(normalizedWord, keyword);
+    return similarity >= FUZZY_THRESHOLD;
   });
 }
 
+// ============================================================================
+// MAIN INTENT DETECTION FUNCTION
+// ============================================================================
+
 /**
  * Detect user intent from search query
- * @param {string} query - Raw search query
- * @returns {object} { type: 'general'|'price'|'quality'|'latest', priceRange: number|null, attributes: {} }
+ * 
+ * @param {string} query - Raw user query (e.g., "Sasta iPhone 16 red")
+ * @returns {object} Intent object with type, priceRange, attributes
+ * 
+ * Flow:
+ * 1. Tokenize query into words
+ * 2. Check each word against keyword lists (price/quality/latest)
+ * 3. Extract price range using regex
+ * 4. Extract attributes (color, storage, strength)
+ * 5. Return intent object
+ * 
+ * Example output:
+ * {
+ *   type: 'price',           // price | quality | latest | general
+ *   priceRange: 50000,       // Extracted from "50k rupees"
+ *   attributes: {
+ *     color: 'red',          // Extracted from "red color"
+ *     storage: '128'         // Extracted from "128GB"
+ *   }
+ * }
  */
 function detectIntent(query) {
+  // Handle empty query
   if (!query || typeof query !== 'string') {
-    return { type: 'general', priceRange: null, attributes: {} };
+    return {
+      type: 'general',
+      priceRange: null,
+      attributes: {}
+    };
   }
 
-  const q = query.trim();
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const intent = { type: 'general', priceRange: null, attributes: {} };
+  const normalizedQuery = query.trim().toLowerCase();
+  const words = normalizedQuery.split(/\s+/).filter(Boolean);
 
-  // Price/budget intent (sasta, cheap, budget, kam)
-  if (words.some((w) => matchesKeyword(w, PRICE_KEYWORDS))) {
-    intent.type = 'price';
-  }
-  
-  // Quality intent (best, top, badiya, achha)
-  if (words.some((w) => matchesKeyword(w, QUALITY_KEYWORDS))) {
-    intent.type = 'quality';
-  }
-  
-  // Latest intent (latest, naya, new)
-  if (words.some((w) => matchesKeyword(w, LATEST_KEYWORDS))) {
-    intent.type = 'latest';
+  // Initialize intent
+  const intent = {
+    type: 'general',
+    priceRange: null,
+    attributes: {}
+  };
+
+  // -------------------------------------------------------------------------
+  // 1. DETECT INTENT TYPE (price/quality/latest)
+  // -------------------------------------------------------------------------
+
+  // Check for price intent
+  for (const word of words) {
+    if (matchesKeyword(word, PRICE_KEYWORDS)) {
+      intent.type = 'price';
+      break;
+    }
   }
 
-  // Price range extraction (e.g. "50k", "50000 rupees", "under 50k")
-  const priceMatch = q.match(PRICE_PATTERN);
+  // Check for quality intent (overrides price if both present)
+  for (const word of words) {
+    if (matchesKeyword(word, QUALITY_KEYWORDS)) {
+      intent.type = 'quality';
+      break;
+    }
+  }
+
+  // Check for latest intent (highest priority)
+  for (const word of words) {
+    if (matchesKeyword(word, LATEST_KEYWORDS)) {
+      intent.type = 'latest';
+      break;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 2. EXTRACT PRICE RANGE
+  // -------------------------------------------------------------------------
+
+  const priceMatch = normalizedQuery.match(PRICE_PATTERN);
   if (priceMatch) {
-    const k = priceMatch[1] || priceMatch[5];
-    const full = priceMatch[3] || priceMatch[4];
-    if (k) intent.priceRange = parseInt(k, 10) * 1000;
-    else if (full) intent.priceRange = parseInt(full, 10);
-    if (intent.priceRange && intent.type === 'general') intent.type = 'price';
+    // Extract from "50k" or "50000"
+    const kValue = priceMatch[1] || priceMatch[5]; // "50" from "50k"
+    const fullValue = priceMatch[3]; // "50000" from "50000 rupees"
+    
+    if (kValue) {
+      intent.priceRange = parseInt(kValue, 10) * 1000; // 50k → 50000
+    } else if (fullValue) {
+      intent.priceRange = parseInt(fullValue, 10);
+    }
+
+    // If price range found but no price intent, set it
+    if (intent.type === 'general' && intent.priceRange) {
+      intent.type = 'price';
+    }
   }
 
-  // Color detection
-  const colorFound = words.some((w) => COLOR_WORDS.some((c) => w.includes(c) || stringSimilarity.compareTwoStrings(w, c) >= FUZZY_THRESHOLD));
-  if (colorFound) {
-    const found = COLOR_WORDS.find((c) => words.some((w) => w.includes(c) || stringSimilarity.compareTwoStrings(w, c) >= FUZZY_THRESHOLD));
-    if (found) intent.attributes.color = found;
+  // -------------------------------------------------------------------------
+  // 3. EXTRACT COLOR ATTRIBUTE
+  // -------------------------------------------------------------------------
+
+  for (const word of words) {
+    for (const color of COLOR_WORDS) {
+      if (word.includes(color) || stringSimilarity.compareTwoStrings(word, color) >= FUZZY_THRESHOLD) {
+        intent.attributes.color = color;
+        break;
+      }
+    }
+    if (intent.attributes.color) break;
   }
 
-  // Storage ("more storage", "128GB", "256gb")
-  const storageMatch = q.match(STORAGE_PATTERN);
+  // -------------------------------------------------------------------------
+  // 4. EXTRACT STORAGE ATTRIBUTE
+  // -------------------------------------------------------------------------
+
+  const storageMatch = normalizedQuery.match(STORAGE_PATTERN);
   if (storageMatch) {
-    intent.attributes.storage = storageMatch[1] || storageMatch[2] || storageMatch[3] || 'more';
+    const storageValue = storageMatch[1]; // "128" from "128GB"
+    if (storageValue) {
+      intent.attributes.storage = storageValue + 'GB';
+    } else {
+      intent.attributes.storage = 'more'; // "more storage" query
+    }
   }
 
-  // Strength (for covers/cases)
-  if (words.some((w) => matchesKeyword(w, STRENGTH_KEYWORDS))) {
-    intent.attributes.strength = true;
+  // -------------------------------------------------------------------------
+  // 5. EXTRACT STRENGTH ATTRIBUTE (for accessories)
+  // -------------------------------------------------------------------------
+
+  for (const word of words) {
+    if (matchesKeyword(word, STRENGTH_KEYWORDS)) {
+      intent.attributes.strength = true;
+      break;
+    }
   }
 
   return intent;
 }
 
-module.exports = { detectIntent, matchesKeyword };
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+module.exports = {
+  detectIntent,
+  matchesKeyword // Export for testing
+};

@@ -1,0 +1,286 @@
+Great — main is poora problem statement **structured, clear aur professional format** me likh deta hoon, taaki **koi important point miss na ho** aur aap direct README / assignment description me use kar sako.
+
+---
+
+# 🛒 Search Engine for an E-Commerce Platform (Electronics)
+
+## 📌 Problem Statement
+
+We are building an e-commerce platform for electronics targeting Tier-2 and Tier-3 cities in India.
+The platform sells products such as:
+
+* Mobile phones
+* Phone accessories
+* Laptops
+* Headphones
+* Smartwatches
+* Chargers and other electronic gadgets
+
+Since the product catalog can contain **millions of products**, an efficient and intelligent **search engine** becomes a core component of the system.
+
+The focus of this project is to **design and implement a product search and ranking engine** that returns the most relevant products for a given user query.
+
+---
+
+## 🔍 Search & Ranking Objective
+
+When a user types a query such as:
+
+> “iPhone”
+
+The system may find thousands of matching results including:
+
+* Different iPhone models
+* Various colors and RAM/storage variants
+* Accessories like covers, chargers, screen guards
+
+The system must **rank products** so that the most relevant items appear at the top.
+
+### Ranking may consider factors like:
+
+* Product rating
+* Number of units sold
+* Stock availability
+* Price / discount
+* Verified reviews
+* Return rate
+* Complaints
+* Text relevance to query
+
+---
+
+## 🧠 Sample User Queries
+
+* Latest iphone
+* Sastha wala iPhone (cheap iPhone – Hinglish)
+* Ifone 16 (spelling mistake)
+* iPhone 16 red color
+* iPhone 16 more storage
+* iPhone cover strong
+* iPhone 50k rupees
+
+The system should understand:
+
+* Spelling variations
+* Intent (cheap, latest, more storage, color, etc.)
+* Product vs accessory searches
+
+---
+
+## ⚙️ What We Build
+
+A **microservice** responsible for:
+
+1. Storing product catalog
+2. Enriching products with metadata
+3. Handling search queries
+4. Ranking products
+5. Returning results within **< 1000 ms latency**
+
+---
+
+## 📦 Data Setup
+
+* Scrape at least **1000+ products** from the web
+* If scraping is difficult, synthetic data may be generated
+* Each product may contain:
+
+  * Title
+  * Description
+  * Category
+  * Brand
+  * Price, MRP
+  * Rating
+  * Stock
+  * Units sold
+  * Return rate
+  * Complaint count
+  * Launch date
+  * Metadata (RAM, storage, screen size, color, etc.)
+
+---
+
+## 🏗️ Microservice Responsibilities
+
+### 1. Store Products
+
+* Store product information **in-memory** or in a datastore
+* Maintain proper entity design
+
+### 2. Update Product Metadata
+
+* Add or update product attributes such as:
+
+  * RAM
+  * Storage
+  * Screen size
+  * Model
+  * Brightness
+  * Battery
+  * Camera details
+
+### 3. Search Products
+
+* Accept search query from user
+* Identify intent
+* Find relevant products
+* Rank products based on multiple attributes
+
+---
+
+## 🔌 Required APIs
+
+---
+
+### 1️⃣ Store Product in Catalog
+
+**Endpoint**
+
+```
+POST /api/v1/product
+```
+
+**Request Body**
+
+```json
+{
+  "title": "Iphone 17",
+  "description": "6.3-inch OLED, A19 chip, 48MP camera",
+  "rating": 4.2,
+  "stock": 1000,
+  "price": 81999,
+  "mrp": 82999,
+  "currency": "Rupee"
+}
+```
+
+**Response**
+
+```json
+{
+  "productId": 101
+}
+```
+
+---
+
+### 2️⃣ Update Product Metadata
+
+**Endpoint**
+
+```
+PUT /api/v1/product/meta-data
+```
+
+**Request Body**
+
+```json
+{
+  "productId": 101,
+  "metadata": {
+    "ram": "8GB",
+    "storage": "128GB",
+    "screensize": "6.3 inches",
+    "model": "Iphone 17",
+    "brightness": "300 nits"
+  }
+}
+```
+
+**Response**
+
+```json
+{
+  "productId": 101,
+  "metadata": {
+    "ram": "8GB",
+    "storage": "128GB",
+    "screensize": "6.3 inches",
+    "model": "Iphone 17",
+    "brightness": "300 nits"
+  }
+}
+```
+
+---
+
+### 3️⃣ Search Products
+
+**Endpoint**
+
+```
+GET /api/v1/search/product?query=Sasta Iphone
+```
+
+**Response**
+
+```json
+{
+  "data": [
+    {
+      "productId": 80,
+      "title": "Iphone 13",
+      "sellingPrice": 35000,
+      "stock": 10
+    },
+    {
+      "productId": 101,
+      "title": "Iphone 16",
+      "sellingPrice": 59000,
+      "stock": 10
+    }
+  ]
+}
+```
+
+---
+
+## 🧮 Ranking Strategy (Example)
+
+Each product receives a **final score**:
+
+```
+FinalScore =
+( TextMatchScore * 0.35 ) +
+( RatingScore * 0.20 ) +
+( SalesScore * 0.15 ) +
+( PriceScore * 0.15 ) +
+( StockScore * 0.10 ) +
+( ReturnPenalty * 0.05 )
+```
+
+Higher score ⇒ Higher rank
+
+---
+
+## ⭐ Good to Have
+
+* Use LLMs to enrich product descriptions
+* Persist data in database (PostgreSQL, MongoDB, ElasticSearch)
+* Fuzzy search / typo tolerance
+* Synonym matching (cheap = sasta)
+
+---
+
+## ✅ Must Have
+
+* Graceful error handling
+* Clean & modular code
+* Well-documented APIs
+* < 1000 ms response time
+* README with setup steps
+* GitHub repo with frequent commits
+* File containing LLM conversations
+
+---
+
+## 📦 Deliverables
+
+* GitHub Repository
+* README.md
+* Source Code
+* Sample Data
+* LLM conversation log file
+
+---
+
