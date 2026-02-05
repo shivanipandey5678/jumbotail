@@ -2,7 +2,7 @@
 
 E-commerce search & ranking microservice for electronics targeting Tier-2 and Tier-3 cities in India.
 
-![Homepage](./assets/c__Users_DELL_AppData_Roaming_Cursor_User_workspaceStorage_f293b16075df7ddf777484a4d0f08dec_images_image-9e00275d-f56d-4811-930b-15521f185cc2.png)
+
 
 ## 📋 Features
 
@@ -19,14 +19,6 @@ E-commerce search & ranking microservice for electronics targeting Tier-2 and Ti
 
 ## 🎨 UI Screenshots
 
-### **Search Results**
-![Search Interface](./assets/c__Users_DELL_AppData_Roaming_Cursor_User_workspaceStorage_f293b16075df7ddf777484a4d0f08dec_images_image-232d7cef-2ae5-44cb-b9d4-8183f153f0e3.png)
-
-### **Add Product Modal**
-![Add Product](./assets/c__Users_DELL_AppData_Roaming_Cursor_User_workspaceStorage_f293b16075df7ddf777484a4d0f08dec_images_image-d685afc4-d9f2-42bc-98d8-21b5406dfa04.png)
-
-### **Update Metadata Modal**
-![Update Metadata](./assets/c__Users_DELL_AppData_Roaming_Cursor_User_workspaceStorage_f293b16075df7ddf777484a4d0f08dec_images_image-4538fef1-99d4-4def-8496-99e67e626f87.png)
 
 ---
 
